@@ -1,4 +1,4 @@
-# Mobile Car Wash Booking
+# Wash — Mobile Car Wash Booking
 
 A lightweight, dependency-free web app for a **home-service (mobile) car wash**: customers book
 online and your team comes to their home or workplace.

@@ -6,7 +6,7 @@
   const KEY = 'mobile-car-wash:v1';
   const DEFAULTS = () => ({
     settings: {
-      businessName: 'Sparkle Mobile Car Wash',
+      businessName: 'Wash',
       open: '08:00',          // earliest arrival
       close: '18:00',         // job must finish by
       interval: 30,
@@ -52,7 +52,10 @@
       if (raw) {
         const parsed = JSON.parse(raw);
         const d = DEFAULTS();
-        return { ...d, ...parsed, settings: { ...d.settings, ...parsed.settings } };
+        const merged = { ...d, ...parsed, settings: { ...d.settings, ...parsed.settings } };
+        // Replace the old sample name if it was never customised.
+        if (merged.settings.businessName === 'Sparkle Mobile Car Wash') merged.settings.businessName = d.settings.businessName;
+        return merged;
       }
     } catch (_) { /* fall through to defaults */ }
     return DEFAULTS();
@@ -654,7 +657,7 @@
     }
     const int = (v, d, lo, hi = Infinity) => Math.min(hi, Math.max(lo, Number.isFinite(parseInt(v, 10)) ? parseInt(v, 10) : d));
     Object.assign(db.settings, {
-      businessName: setForm.businessName.value.trim() || 'Mobile Car Wash',
+      businessName: setForm.businessName.value.trim() || 'Wash',
       open: setForm.open.value,
       close: setForm.close.value,
       interval: int(setForm.interval.value, 30, 5),
@@ -676,7 +679,7 @@
 
   function applyBranding() {
     $('#businessName').textContent = db.settings.businessName;
-    document.title = `${db.settings.businessName} — Book a home car wash`;
+    document.title = `${db.settings.businessName} — Mobile Car Wash`;
   }
 
   // ---------- Init ----------
