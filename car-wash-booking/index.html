@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Service Booking</title>
+  <title>Car Wash Booking</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><span class="logo" aria-hidden="true">◆</span> <span id="businessName">Service Booking</span></div>
+    <div class="brand"><span class="logo" aria-hidden="true">💧</span> <span id="businessName">Car Wash</span></div>
     <nav class="tabs" role="tablist">
-      <button class="tab active" data-view="book" role="tab">Book</button>
+      <button class="tab active" data-view="book" role="tab">Book a wash</button>
       <button class="tab" data-view="mine" role="tab">My bookings</button>
       <button class="tab" data-view="admin" role="tab">Admin</button>
     </nav>
@@ -20,18 +20,39 @@
     <!-- BOOK -->
     <section id="view-book" class="view active">
       <ol class="steps" id="steps">
-        <li data-step="1" class="current">Service</li>
-        <li data-step="2">Date &amp; time</li>
-        <li data-step="3">Your details</li>
-        <li data-step="4">Done</li>
+        <li data-step="1" class="current">Package</li>
+        <li data-step="2">Vehicle &amp; extras</li>
+        <li data-step="3">Date &amp; time</li>
+        <li data-step="4">Your details</li>
+        <li data-step="5">Done</li>
       </ol>
 
       <div class="step-panel" data-panel="1">
-        <h2>Choose a service</h2>
+        <h2>Choose a wash package</h2>
         <div id="serviceGrid" class="grid"></div>
       </div>
 
       <div class="step-panel hidden" data-panel="2">
+        <h2>Your vehicle &amp; extras</h2>
+        <p class="muted" id="packageLabel"></p>
+        <div class="card block">
+          <h3>Vehicle size</h3>
+          <div id="vehicleOptions" class="options"></div>
+        </div>
+        <div class="card block">
+          <h3>Add-ons <span class="muted small">(optional)</span></h3>
+          <div id="addonOptions" class="options"></div>
+        </div>
+        <div class="card total-bar">
+          <div><span class="muted small">Estimated total</span><div id="runningTotal" class="total"></div></div>
+          <div class="actions tight">
+            <button class="btn ghost" data-back="1">Back</button>
+            <button class="btn primary" id="toTime">Choose a time</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="step-panel hidden" data-panel="3">
         <h2>Pick a date and time</h2>
         <p class="muted" id="selectedServiceLabel"></p>
         <div class="datetime">
@@ -50,30 +71,40 @@
           </div>
         </div>
         <div class="actions">
-          <button class="btn ghost" data-back="1">Back</button>
+          <button class="btn ghost" data-back="2">Back</button>
         </div>
       </div>
 
-      <div class="step-panel hidden" data-panel="3">
+      <div class="step-panel hidden" data-panel="4">
         <h2>Your details</h2>
         <div class="summary card" id="bookingSummary"></div>
         <form id="detailsForm" class="form card" novalidate>
-          <label>Full name <input name="name" required autocomplete="name" /></label>
+          <div class="row">
+            <label>Full name <input name="name" required autocomplete="name" /></label>
+            <label>Phone <input name="phone" type="tel" required autocomplete="tel" /></label>
+          </div>
           <label>Email <input name="email" type="email" required autocomplete="email" /></label>
-          <label>Phone <input name="phone" type="tel" autocomplete="tel" /></label>
-          <label>Notes <textarea name="notes" rows="3" placeholder="Anything we should know?"></textarea></label>
+          <fieldset>
+            <legend>Vehicle</legend>
+            <div class="row">
+              <label>Make &amp; model <input name="make" required placeholder="e.g. Toyota Corolla" /></label>
+              <label>Colour <input name="color" placeholder="e.g. Silver" /></label>
+              <label>Licence plate <input name="plate" placeholder="e.g. ABC 123" autocapitalize="characters" /></label>
+            </div>
+          </fieldset>
+          <label>Notes <textarea name="notes" rows="3" placeholder="Stains, pet hair, scratches we should know about?"></textarea></label>
           <p class="error" id="formError" role="alert"></p>
           <div class="actions">
-            <button type="button" class="btn ghost" data-back="2">Back</button>
+            <button type="button" class="btn ghost" data-back="3">Back</button>
             <button type="submit" class="btn primary">Confirm booking</button>
           </div>
         </form>
       </div>
 
-      <div class="step-panel hidden" data-panel="4">
+      <div class="step-panel hidden" data-panel="5">
         <div class="card success">
           <div class="check" aria-hidden="true">✓</div>
-          <h2>You're booked!</h2>
+          <h2>Your wash is booked!</h2>
           <div id="confirmation"></div>
           <div class="actions center">
             <button class="btn ghost" id="viewMine">View my bookings</button>
@@ -87,7 +118,7 @@
     <section id="view-mine" class="view">
       <h2>My bookings</h2>
       <form id="lookupForm" class="inline-form">
-        <input name="email" type="email" placeholder="Enter the email you booked with" required />
+        <input name="query" placeholder="Email or licence plate" required />
         <button class="btn primary">Find</button>
       </form>
       <div id="myBookings" class="list"></div>
@@ -99,7 +130,7 @@
         <h2>Admin</h2>
         <div class="seg" id="adminTabs">
           <button class="seg-btn active" data-admin="bookings">Bookings</button>
-          <button class="seg-btn" data-admin="services">Services</button>
+          <button class="seg-btn" data-admin="services">Packages</button>
           <button class="seg-btn" data-admin="settings">Settings</button>
         </div>
       </div>
@@ -108,17 +139,18 @@
         <div class="stats" id="stats"></div>
         <div class="toolbar">
           <select id="statusFilter">
-            <option value="upcoming">Upcoming</option>
+            <option value="today">Today</option>
+            <option value="upcoming" selected>Upcoming</option>
             <option value="all">All</option>
             <option value="confirmed">Confirmed</option>
             <option value="completed">Completed</option>
             <option value="cancelled">Cancelled</option>
           </select>
-          <input id="searchBox" type="search" placeholder="Search name, email, service…" />
+          <input id="searchBox" type="search" placeholder="Search name, plate, vehicle, package…" />
         </div>
         <div class="table-wrap card">
           <table>
-            <thead><tr><th>When</th><th>Service</th><th>Customer</th><th>Status</th><th></th></tr></thead>
+            <thead><tr><th>When</th><th>Wash</th><th>Vehicle</th><th>Customer</th><th>Status</th><th></th></tr></thead>
             <tbody id="bookingRows"></tbody>
           </table>
           <p class="empty hidden" id="noRows">No bookings match.</p>
@@ -127,20 +159,31 @@
 
       <div data-admin-panel="services" class="hidden">
         <form id="serviceForm" class="form card">
-          <h3 id="serviceFormTitle">Add a service</h3>
+          <h3 id="serviceFormTitle">Add a package or add-on</h3>
           <input type="hidden" name="id" />
           <div class="row">
+            <label>Type
+              <select name="kind">
+                <option value="package">Wash package</option>
+                <option value="addon">Add-on</option>
+              </select>
+            </label>
             <label>Name <input name="name" required /></label>
-            <label>Duration (min) <input name="duration" type="number" min="15" step="15" value="60" required /></label>
-            <label>Price <input name="price" type="number" min="0" step="0.01" value="50" required /></label>
+            <label>Duration (min) <input name="duration" type="number" min="0" step="5" value="30" required /></label>
+            <label>Price <input name="price" type="number" min="0" step="0.01" value="25" required /></label>
           </div>
           <label>Description <input name="description" /></label>
           <div class="actions">
             <button type="button" class="btn ghost hidden" id="cancelEdit">Cancel</button>
-            <button class="btn primary">Save service</button>
+            <button class="btn primary">Save</button>
           </div>
         </form>
-        <div id="serviceAdminList" class="list"></div>
+        <h3 class="section-title">Wash packages</h3>
+        <div id="packageAdminList" class="list"></div>
+        <h3 class="section-title">Add-ons</h3>
+        <div id="addonAdminList" class="list"></div>
+        <h3 class="section-title">Vehicle size surcharges</h3>
+        <div id="vehicleAdminList" class="card form"></div>
       </div>
 
       <div data-admin-panel="settings" class="hidden">
@@ -149,7 +192,8 @@
           <div class="row">
             <label>Opens <input name="open" type="time" required /></label>
             <label>Closes <input name="close" type="time" required /></label>
-            <label>Slot interval (min) <input name="interval" type="number" min="5" step="5" required /></label>
+            <label>Start-time interval (min) <input name="interval" type="number" min="5" step="5" required /></label>
+            <label>Wash bays <input name="bays" type="number" min="1" max="50" required /></label>
           </div>
           <fieldset>
             <legend>Open days</legend>
