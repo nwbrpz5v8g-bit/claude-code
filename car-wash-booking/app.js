@@ -60,8 +60,135 @@
     } catch (_) { /* fall through to defaults */ }
     return DEFAULTS();
   }
+  // Two storage modes:
+  //  - local:  everything in this browser's localStorage (opening index.html directly)
+  //  - shared: when published as a claude.ai artifact, pricing/settings, team schedules and
+  //            bookings live in the artifact's shared database so customers and staff see the same data.
+  let remote = null;      // { store, uid, isAdmin }
+  let busyRemote = [];    // shared, anonymised team schedule (no customer details)
+  let lastCfg = '';
+  const cfgOf = () => ({ settings: db.settings, services: db.services, zones: db.zones, vehicles: db.vehicles });
+  const busyJobs = () => (remote ? busyRemote : db.bookings);
+
   function save() {
-    try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (_) { /* storage unavailable */ }
+    if (!remote) {
+      try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (_) { /* storage unavailable */ }
+      return;
+    }
+    if (!remote.isAdmin) return;
+    const cfg = JSON.stringify(cfgOf());
+    if (cfg === lastCfg) return;
+    lastCfg = cfg;
+    remote.store.doc('config/main').set(JSON.parse(cfg))
+      .catch(() => toast("Couldn't save changes. Check your connection and try again."));
+  }
+
+  // Merge one item into a per-customer document ({ items: { id: value } }), creating it if needed.
+  async function upsertItem(path, id, value) {
+    const ref = remote.store.doc(path);
+    try { await ref.update({ items: { [id]: value } }); }
+    catch (_) { await ref.set({ items: { [id]: value } }); }
+  }
+  const slotOf = (b) => ({ id: b.id, owner: b.owner, date: b.date, start: b.start, duration: b.duration, team: b.team, status: b.status });
+
+  async function addBooking(b) {
+    if (!remote) { db.bookings.push(b); save(); return; }
+    b.owner = remote.uid;
+    await upsertItem('bookings/' + b.owner, b.id, b);
+    await upsertItem('slots/' + b.owner, b.id, slotOf(b));
+  }
+
+  async function setStatus(id, status) {
+    const b = db.bookings.find((x) => x.id === id);
+    if (!b) return;
+    if (!remote) { b.status = status; save(); return; }
+    await remote.store.doc('bookings/' + b.owner).update({ items: { [id]: { status } } });
+    await remote.store.doc('slots/' + b.owner).update({ items: { [id]: { status } } });
+  }
+
+  async function deleteBooking(id) {
+    const b = db.bookings.find((x) => x.id === id);
+    if (!b) return;
+    if (!remote) { db.bookings = db.bookings.filter((x) => x.id !== id); save(); return; }
+    const keep = (list) => Object.fromEntries(list.filter((x) => x.owner === b.owner && x.id !== id).map((x) => [x.id, x]));
+    await remote.store.doc('bookings/' + b.owner).set({ items: keep(db.bookings) });
+    await remote.store.doc('slots/' + b.owner).set({ items: keep(busyRemote) });
+  }
+
+  async function initRemote() {
+    if (!window.claude?.use) return;
+    const [store, user] = await Promise.all([window.claude.use('db'), window.claude.use('user')]);
+    if (!store || !user) return;
+    const uid = await user.id();
+    if (!uid) return;
+    const isAdmin = !!(await user.canEdit());
+    remote = { store, uid, isAdmin };
+    db.bookings = [];
+    busyRemote = [];
+    const flatten = (docs) => docs.flatMap((d) => Object.values(d.data()?.items || {}).map((x) => ({ ...x, owner: d.id })));
+    const fail = () => toast("Couldn't load the latest bookings. Check your connection.");
+
+    store.doc('config/main').onSnapshot((snap) => {
+      if (snap.exists) {
+        const d = snap.data();
+        db.settings = { ...DEFAULTS().settings, ...d.settings };
+        if (Array.isArray(d.services)) db.services = d.services.map((x) => ({ ...x }));
+        if (Array.isArray(d.zones)) db.zones = d.zones.map((x) => ({ ...x }));
+        if (Array.isArray(d.vehicles)) db.vehicles = d.vehicles.map((x) => ({ ...x }));
+        lastCfg = JSON.stringify(cfgOf());
+      }
+      applyBranding();
+      refresh({ config: true });
+    }, fail);
+    store.collection('slots').onSnapshot((q) => { busyRemote = flatten(q.docs); refresh(); }, fail);
+    if (isAdmin) {
+      store.collection('bookings').onSnapshot((q) => { db.bookings = flatten(q.docs); refresh(); }, fail);
+    } else {
+      store.doc('bookings/' + uid).onSnapshot((snap) => {
+        db.bookings = snap.exists ? flatten([snap]) : [];
+        refresh();
+      }, fail);
+    }
+    applyMode();
+    refresh({ config: true });
+  }
+
+  // Re-render whatever is on screen after shared data changes, without clobbering forms being edited.
+  function refresh({ config = false } = {}) {
+    const view = $('.view.active')?.id;
+    if (view === 'view-book') {
+      if (state.step === 1) renderZones();
+      else if (state.step === 2 && config) renderServices();
+      else if (state.step === 3 && config) renderExtras();
+      else if (state.step === 4) renderCalendar();
+    } else if (view === 'view-mine') {
+      renderMine();
+    } else if (view === 'view-admin') {
+      renderTeamFilter(); renderStats(); renderBookingTable();
+      if (config) renderServiceAdmin();
+    }
+  }
+
+  function applyMode() {
+    const adminTab = $('.tab[data-view=admin]');
+    adminTab.hidden = !!remote && !remote.isAdmin;
+    if (adminTab.hidden && $('#view-admin').classList.contains('active')) showView('book');
+    $('#lookupForm').hidden = !!remote;
+    $('#resetData').textContent = remote ? 'Reset pricing & settings' : 'Reset all data';
+  }
+
+  // In-page confirmation (browser confirm() dialogs are blocked inside published pages).
+  function askConfirm(message, okLabel = 'Confirm') {
+    return new Promise((resolve) => {
+      const dlg = $('#confirmDlg');
+      $('#confirmMsg').textContent = message;
+      $('#confirmOk').textContent = okLabel;
+      dlg.hidden = false;
+      $('#confirmOk').focus();
+      const done = (v) => { dlg.hidden = true; $('#confirmOk').onclick = $('#confirmCancel').onclick = null; resolve(v); };
+      $('#confirmOk').onclick = () => done(true);
+      $('#confirmCancel').onclick = () => done(false);
+    });
   }
 
   // ---------- Helpers ----------
@@ -114,7 +241,7 @@
   function freeTeams(dateStr, start, duration) {
     const { teams, travelBuffer } = db.settings;
     const buf = Number(travelBuffer);
-    const jobs = db.bookings.filter((b) => b.date === dateStr && b.status !== 'cancelled');
+    const jobs = busyJobs().filter((b) => b.date === dateStr && b.status !== 'cancelled');
     const free = [];
     for (let team = 1; team <= teams; team++) {
       const clash = jobs.some((b) => b.team === team &&
@@ -322,7 +449,7 @@
     $('#formError').textContent = '';
   }
 
-  $('#detailsForm').addEventListener('submit', (e) => {
+  $('#detailsForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const f = e.target;
     const fd = new FormData(f);
@@ -371,8 +498,18 @@
       status: 'confirmed',
       createdAt: new Date().toISOString(),
     };
-    db.bookings.push(booking);
-    save();
+    const submitBtn = f.querySelector('[type=submit]');
+    submitBtn.disabled = true;
+    try {
+      await addBooking(booking);
+    } catch (_) {
+      err.textContent = remote
+        ? "Couldn't save your booking. Ask the business to give you booking access, or try again."
+        : "Couldn't save your booking. Please try again.";
+      return;
+    } finally {
+      submitBtn.disabled = false;
+    }
     state.lastBooking = booking;
     try { localStorage.setItem(KEY + ':lastLookup', booking.email); } catch (_) {}
     f.reset();
@@ -401,12 +538,17 @@
     if (!input.value) { try { input.value = localStorage.getItem(KEY + ':lastLookup') || ''; } catch (_) {} }
     const q = input.value.trim().toLowerCase();
     const box = $('#myBookings');
-    if (!q) { box.innerHTML = '<p class="muted">Enter your email or licence plate to see your bookings.</p>'; return; }
-    const plate = normPlate(q);
-    const mine = db.bookings
-      .filter((b) => b.email === q || (plate && normPlate(b.plate) === plate))
-      .sort((a, b) => bookingStart(b) - bookingStart(a));
-    if (!mine.length) { box.innerHTML = '<p class="muted">No bookings found.</p>'; return; }
+    let mine;
+    if (remote) {
+      mine = db.bookings.filter((b) => b.owner === remote.uid);
+      if (!mine.length) { box.innerHTML = '<p class="muted">You have no bookings yet. Book a wash and it will show up here.</p>'; return; }
+    } else {
+      if (!q) { box.innerHTML = '<p class="muted">Enter your email or licence plate to see your bookings.</p>'; return; }
+      const plate = normPlate(q);
+      mine = db.bookings.filter((b) => b.email === q || (plate && normPlate(b.plate) === plate));
+      if (!mine.length) { box.innerHTML = '<p class="muted">No bookings found.</p>'; return; }
+    }
+    mine.sort((a, b) => bookingStart(b) - bookingStart(a));
     const now = new Date();
     box.innerHTML = mine.map((b) => {
       const future = bookingStart(b) > now && b.status === 'confirmed';
@@ -420,17 +562,12 @@
         ${future ? `<button class="btn small danger" data-cancel="${esc(b.id)}">Cancel</button>` : ''}
       </div>`;
     }).join('');
-    $$('[data-cancel]', box).forEach((btn) => btn.addEventListener('click', () => {
-      if (!confirm('Cancel this booking?')) return;
-      setStatus(btn.dataset.cancel, 'cancelled');
+    $$('[data-cancel]', box).forEach((btn) => btn.addEventListener('click', async () => {
+      if (!(await askConfirm('Cancel this booking?', 'Cancel booking'))) return;
+      try { await setStatus(btn.dataset.cancel, 'cancelled'); toast('Booking cancelled'); }
+      catch (_) { toast("Couldn't cancel. Please try again."); }
       renderMine();
-      toast('Booking cancelled');
     }));
-  }
-
-  function setStatus(id, status) {
-    const b = db.bookings.find((x) => x.id === id);
-    if (b) { b.status = status; save(); }
   }
 
   // ---------- Admin ----------
@@ -513,15 +650,19 @@
         </td>
       </tr>`;
     }).join('');
-    $$('#bookingRows [data-act]').forEach((btn) => btn.addEventListener('click', () => {
+    $$('#bookingRows [data-act]').forEach((btn) => btn.addEventListener('click', async () => {
       const { act, id } = btn.dataset;
-      if (act === 'delete') {
-        if (!confirm('Delete this job permanently?')) return;
-        db.bookings = db.bookings.filter((b) => b.id !== id);
-        save();
-      } else {
-        setStatus(id, act);
-      }
+      try {
+        if (act === 'delete') {
+          if (!(await askConfirm('Delete this job permanently?', 'Delete'))) return;
+          await deleteBooking(id);
+        } else if (act === 'cancelled') {
+          if (!(await askConfirm('Cancel this job? The customer will see it as cancelled.', 'Cancel job'))) return;
+          await setStatus(id, act);
+        } else {
+          await setStatus(id, act);
+        }
+      } catch (_) { toast("Couldn't update the job. Please try again."); }
       renderStats();
       renderBookingTable();
     }));
@@ -553,8 +694,8 @@
       sForm.scrollIntoView({ behavior: 'smooth' });
       sForm.name.focus();
     }));
-    $$('[data-del]').forEach((b) => b.addEventListener('click', () => {
-      if (!confirm('Delete this item? Existing bookings are kept.')) return;
+    $$('[data-del]').forEach((b) => b.addEventListener('click', async () => {
+      if (!(await askConfirm('Delete this item? Existing bookings are kept.', 'Delete'))) return;
       db.services = db.services.filter((s) => s.id !== b.dataset.del);
       save(); renderServiceAdmin(); toast('Deleted');
     }));
@@ -671,9 +812,13 @@
     $('#settingsSaved').textContent = 'Saved.';
     toast('Settings saved');
   });
-  $('#resetData').addEventListener('click', () => {
-    if (!confirm('This deletes all pricing, bookings and settings. Continue?')) return;
-    db = DEFAULTS(); save(); applyBranding(); renderAdmin(); state.zoneId = null; goStep(1);
+  $('#resetData').addEventListener('click', async () => {
+    const msg = remote
+      ? 'Reset packages, add-ons, areas, surcharges and settings to the defaults? Bookings are kept.'
+      : 'This deletes all pricing, bookings and settings. Continue?';
+    if (!(await askConfirm(msg, 'Reset'))) return;
+    db = remote ? { ...DEFAULTS(), bookings: db.bookings } : DEFAULTS();
+    save(); applyBranding(); renderAdmin(); state.zoneId = null; goStep(1);
     toast('Data reset');
   });
 
@@ -686,4 +831,5 @@
   applyBranding();
   save();
   goStep(1);
+  initRemote().catch(() => { /* stay in local mode */ });
 })();
