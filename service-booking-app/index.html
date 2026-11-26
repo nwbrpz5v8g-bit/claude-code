@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Service Booking</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo" aria-hidden="true">◆</span> <span id="businessName">Service Booking</span></div>
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-view="book" role="tab">Book</button>
+      <button class="tab" data-view="mine" role="tab">My bookings</button>
+      <button class="tab" data-view="admin" role="tab">Admin</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- BOOK -->
+    <section id="view-book" class="view active">
+      <ol class="steps" id="steps">
+        <li data-step="1" class="current">Service</li>
+        <li data-step="2">Date &amp; time</li>
+        <li data-step="3">Your details</li>
+        <li data-step="4">Done</li>
+      </ol>
+
+      <div class="step-panel" data-panel="1">
+        <h2>Choose a service</h2>
+        <div id="serviceGrid" class="grid"></div>
+      </div>
+
+      <div class="step-panel hidden" data-panel="2">
+        <h2>Pick a date and time</h2>
+        <p class="muted" id="selectedServiceLabel"></p>
+        <div class="datetime">
+          <div class="calendar card">
+            <div class="cal-head">
+              <button class="icon-btn" id="prevMonth" aria-label="Previous month">‹</button>
+              <strong id="monthLabel"></strong>
+              <button class="icon-btn" id="nextMonth" aria-label="Next month">›</button>
+            </div>
+            <div class="cal-grid cal-dow"><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span></div>
+            <div class="cal-grid" id="calDays"></div>
+          </div>
+          <div class="slots card">
+            <h3 id="slotsTitle">Select a date</h3>
+            <div id="slotList" class="slot-list"></div>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn ghost" data-back="1">Back</button>
+        </div>
+      </div>
+
+      <div class="step-panel hidden" data-panel="3">
+        <h2>Your details</h2>
+        <div class="summary card" id="bookingSummary"></div>
+        <form id="detailsForm" class="form card" novalidate>
+          <label>Full name <input name="name" required autocomplete="name" /></label>
+          <label>Email <input name="email" type="email" required autocomplete="email" /></label>
+          <label>Phone <input name="phone" type="tel" autocomplete="tel" /></label>
+          <label>Notes <textarea name="notes" rows="3" placeholder="Anything we should know?"></textarea></label>
+          <p class="error" id="formError" role="alert"></p>
+          <div class="actions">
+            <button type="button" class="btn ghost" data-back="2">Back</button>
+            <button type="submit" class="btn primary">Confirm booking</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="step-panel hidden" data-panel="4">
+        <div class="card success">
+          <div class="check" aria-hidden="true">✓</div>
+          <h2>You're booked!</h2>
+          <div id="confirmation"></div>
+          <div class="actions center">
+            <button class="btn ghost" id="viewMine">View my bookings</button>
+            <button class="btn primary" id="bookAnother">Book another</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- MY BOOKINGS -->
+    <section id="view-mine" class="view">
+      <h2>My bookings</h2>
+      <form id="lookupForm" class="inline-form">
+        <input name="email" type="email" placeholder="Enter the email you booked with" required />
+        <button class="btn primary">Find</button>
+      </form>
+      <div id="myBookings" class="list"></div>
+    </section>
+
+    <!-- ADMIN -->
+    <section id="view-admin" class="view">
+      <div class="admin-head">
+        <h2>Admin</h2>
+        <div class="seg" id="adminTabs">
+          <button class="seg-btn active" data-admin="bookings">Bookings</button>
+          <button class="seg-btn" data-admin="services">Services</button>
+          <button class="seg-btn" data-admin="settings">Settings</button>
+        </div>
+      </div>
+
+      <div data-admin-panel="bookings">
+        <div class="stats" id="stats"></div>
+        <div class="toolbar">
+          <select id="statusFilter">
+            <option value="upcoming">Upcoming</option>
+            <option value="all">All</option>
+            <option value="confirmed">Confirmed</option>
+            <option value="completed">Completed</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+          <input id="searchBox" type="search" placeholder="Search name, email, service…" />
+        </div>
+        <div class="table-wrap card">
+          <table>
+            <thead><tr><th>When</th><th>Service</th><th>Customer</th><th>Status</th><th></th></tr></thead>
+            <tbody id="bookingRows"></tbody>
+          </table>
+          <p class="empty hidden" id="noRows">No bookings match.</p>
+        </div>
+      </div>
+
+      <div data-admin-panel="services" class="hidden">
+        <form id="serviceForm" class="form card">
+          <h3 id="serviceFormTitle">Add a service</h3>
+          <input type="hidden" name="id" />
+          <div class="row">
+            <label>Name <input name="name" required /></label>
+            <label>Duration (min) <input name="duration" type="number" min="15" step="15" value="60" required /></label>
+            <label>Price <input name="price" type="number" min="0" step="0.01" value="50" required /></label>
+          </div>
+          <label>Description <input name="description" /></label>
+          <div class="actions">
+            <button type="button" class="btn ghost hidden" id="cancelEdit">Cancel</button>
+            <button class="btn primary">Save service</button>
+          </div>
+        </form>
+        <div id="serviceAdminList" class="list"></div>
+      </div>
+
+      <div data-admin-panel="settings" class="hidden">
+        <form id="settingsForm" class="form card">
+          <label>Business name <input name="businessName" required /></label>
+          <div class="row">
+            <label>Opens <input name="open" type="time" required /></label>
+            <label>Closes <input name="close" type="time" required /></label>
+            <label>Slot interval (min) <input name="interval" type="number" min="5" step="5" required /></label>
+          </div>
+          <fieldset>
+            <legend>Open days</legend>
+            <div class="days" id="dayChecks"></div>
+          </fieldset>
+          <label>Currency symbol <input name="currency" maxlength="3" required /></label>
+          <div class="actions">
+            <button type="button" class="btn danger" id="resetData">Reset all data</button>
+            <button class="btn primary">Save settings</button>
+          </div>
+          <p class="muted" id="settingsSaved"></p>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="app.js"></script>
+</body>
+</html>
