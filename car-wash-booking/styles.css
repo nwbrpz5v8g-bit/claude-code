@@ -34,7 +34,7 @@ h3 { margin: 0 0 10px; font-size: 1.05rem; }
 .tab { border: 0; background: none; color: var(--muted); padding: 8px 12px; border-radius: 8px; cursor: pointer; font: inherit; }
 .tab.active { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
 
-main { max-width: 980px; margin: 0 auto; padding: 24px 16px 64px; }
+main { max-width: 1140px; margin: 0 auto; padding: 24px 16px 64px; }
 .view { display: none; }
 .view.active { display: block; }
 
@@ -64,7 +64,7 @@ main { max-width: 980px; margin: 0 auto; padding: 24px 16px 64px; }
 .day:disabled { color: var(--muted); opacity: .4; cursor: default; }
 .day.today { font-weight: 700; text-decoration: underline; }
 .day.selected { background: var(--primary); color: var(--primary-ink); }
-.slot-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; max-height: 360px; overflow-y: auto; }
+.slot-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; max-height: 420px; overflow-y: auto; }
 .slot { padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; cursor: pointer; }
 .slot:hover { border-color: var(--primary); background: var(--primary-soft); }
 
@@ -141,3 +141,14 @@ td.act { white-space: nowrap; text-align: right; }
 .slot small { display: block; font-size: .7rem; color: var(--warn); }
 .section-title { margin: 20px 0 10px; }
 .vehicle-row { border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+
+.tagline { font-weight: 500; font-size: .8rem; color: var(--muted); border-left: 1px solid var(--border); padding-left: 8px; margin-left: 4px; }
+@media (max-width: 520px) { .tagline { display: none; } }
+button.option { font: inherit; color: inherit; background: var(--surface); text-align: left; grid-template-columns: 1fr; padding: 14px; }
+button.option:hover, button.option.chosen { border-color: var(--primary); background: var(--primary-soft); }
+.checks { display: flex; flex-wrap: wrap; gap: 8px 20px; }
+.form .checks label, .form label.inline { flex-direction: row; align-items: center; gap: 8px; color: var(--text); flex: 0 1 auto; }
+.form fieldset { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+.team-chip { display: inline-block; padding: 2px 8px; border-radius: 6px; background: var(--primary-soft); color: var(--primary); font-weight: 700; font-size: .8rem; }
+.align-end { align-self: flex-end; margin-bottom: 4px; }
+td a { color: var(--primary); }

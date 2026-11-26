@@ -1,29 +1,38 @@
-/* Car Wash Booking — vanilla JS, data persisted in localStorage. */
+/* Mobile (home service) Car Wash Booking — vanilla JS, data persisted in localStorage. */
 (() => {
   'use strict';
 
   // ---------- Storage ----------
-  const KEY = 'car-wash-booking:v1';
+  const KEY = 'mobile-car-wash:v1';
   const DEFAULTS = () => ({
     settings: {
-      businessName: 'Sparkle Car Wash',
-      open: '08:00',
-      close: '18:00',
-      interval: 15,
-      bays: 2,
-      openDays: [0, 1, 2, 3, 4, 5, 6], // 0 = Sunday
+      businessName: 'Sparkle Mobile Car Wash',
+      open: '08:00',          // earliest arrival
+      close: '18:00',         // job must finish by
+      interval: 30,
+      teams: 2,               // vans / crews working in parallel
+      travelBuffer: 30,       // minutes kept free after each job to drive to the next
+      arrivalWindow: 30,      // customer sees "arrive between X and X+window"
+      openDays: [1, 2, 3, 4, 5, 6], // 0 = Sunday
       currency: '$',
       bookAheadDays: 60,
     },
+    zones: [
+      { id: uid(), name: 'City Centre', fee: 0 },
+      { id: uid(), name: 'Inner Suburbs', fee: 5 },
+      { id: uid(), name: 'North Suburbs', fee: 10 },
+      { id: uid(), name: 'South Suburbs', fee: 10 },
+      { id: uid(), name: 'Outer Areas', fee: 20 },
+    ],
     services: [
-      { id: uid(), kind: 'package', name: 'Express Exterior', duration: 20, price: 15, description: 'Foam wash, rinse and spot-free dry.' },
-      { id: uid(), kind: 'package', name: 'Inside & Out', duration: 45, price: 35, description: 'Exterior wash plus vacuum, windows and dash wipe-down.' },
-      { id: uid(), kind: 'package', name: 'Deluxe Wash & Wax', duration: 75, price: 65, description: 'Inside & Out plus hand wax, wheel clean and tyre shine.' },
-      { id: uid(), kind: 'package', name: 'Full Valet', duration: 180, price: 160, description: 'Deep clean: shampoo seats and carpets, clay bar, polish and wax.' },
+      { id: uid(), kind: 'package', name: 'Exterior Wash', duration: 30, price: 25, description: 'Hand wash, wheels, windows and towel dry — on your driveway.' },
+      { id: uid(), kind: 'package', name: 'Inside & Out', duration: 60, price: 45, description: 'Exterior wash plus vacuum, windows inside and dash wipe-down.' },
+      { id: uid(), kind: 'package', name: 'Premium Wash & Wax', duration: 90, price: 75, description: 'Inside & Out plus hand wax, tyre shine and door jambs.' },
+      { id: uid(), kind: 'package', name: 'Full Detail', duration: 180, price: 180, description: 'Seat and carpet shampoo, clay bar, polish and wax.' },
       { id: uid(), kind: 'addon', name: 'Tyre shine', duration: 5, price: 5, description: '' },
       { id: uid(), kind: 'addon', name: 'Rain-repellent glass', duration: 10, price: 9, description: '' },
       { id: uid(), kind: 'addon', name: 'Pet hair removal', duration: 15, price: 15, description: '' },
-      { id: uid(), kind: 'addon', name: 'Engine bay clean', duration: 20, price: 20, description: '' },
+      { id: uid(), kind: 'addon', name: 'Leather clean & condition', duration: 20, price: 25, description: '' },
       { id: uid(), kind: 'addon', name: 'Air freshener', duration: 0, price: 3, description: '' },
     ],
     vehicles: [
@@ -63,6 +72,10 @@
     const h = Math.floor(min / 60), m = min % 60;
     return `${((h + 11) % 12) + 1}:${pad(m)} ${h >= 12 ? 'PM' : 'AM'}`;
   };
+  const fmtWindow = (start) => {
+    const w = Number(db.settings.arrivalWindow);
+    return w > 0 ? `${fmtTime(start)} – ${fmtTime(start + w)}` : fmtTime(start);
+  };
   const fmtDur = (min) => min >= 60 ? `${Math.floor(min / 60)} h${min % 60 ? ` ${min % 60} min` : ''}` : `${min} min`;
   const isoDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   const parseISO = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
@@ -76,8 +89,11 @@
   const packages = () => db.services.filter((s) => s.kind !== 'addon');
   const addons = () => db.services.filter((s) => s.kind === 'addon');
   const vehicleById = (id) => db.vehicles.find((v) => v.id === id);
+  const zoneById = (id) => db.zones.find((z) => z.id === id);
   const bookingStart = (b) => { const d = parseISO(b.date); d.setMinutes(b.start); return d; };
   const normPlate = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const fullAddress = (b) => [b.address, b.town, b.postcode].filter(Boolean).join(', ');
+  const mapUrl = (b) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fullAddress(b))}`;
 
   function toast(msg) {
     const t = $('#toast');
@@ -87,27 +103,33 @@
     toast._t = setTimeout(() => t.classList.remove('show'), 2200);
   }
 
-  // ---------- Availability (multiple bays) ----------
+  // ---------- Availability (teams + travel buffer) ----------
   const isOpenDay = (date) => db.settings.openDays.includes(date.getDay());
 
-  // Peak number of bookings that overlap [start, end) — checked at every booking boundary.
-  function peakOverlap(bookings, start, end) {
-    const overlapping = bookings.filter((b) => start < b.start + b.duration && b.start < end);
-    const points = [start, ...overlapping.map((b) => b.start).filter((t) => t > start && t < end)];
-    return points.reduce((max, t) =>
-      Math.max(max, overlapping.filter((b) => b.start <= t && t < b.start + b.duration).length), 0);
+  // Each team does one job at a time; after a job it needs `travelBuffer` minutes
+  // to pack up and drive before it can start the next one.
+  function freeTeams(dateStr, start, duration) {
+    const { teams, travelBuffer } = db.settings;
+    const buf = Number(travelBuffer);
+    const jobs = db.bookings.filter((b) => b.date === dateStr && b.status !== 'cancelled');
+    const free = [];
+    for (let team = 1; team <= teams; team++) {
+      const clash = jobs.some((b) => b.team === team &&
+        start < b.start + b.duration + buf && b.start < start + duration + buf);
+      if (!clash) free.push(team);
+    }
+    return free;
   }
 
   function availableSlots(dateStr, duration) {
-    const { open, close, interval, bays } = db.settings;
+    const { open, close, interval } = db.settings;
     const openM = toMin(open), closeM = toMin(close);
-    const taken = db.bookings.filter((b) => b.date === dateStr && b.status !== 'cancelled');
-    const minStart = dateStr === isoDate(new Date()) ? nowMinutes() + 15 : -1;
+    const minStart = dateStr === isoDate(new Date()) ? nowMinutes() + 60 : -1; // 1h notice to drive out
     const slots = [];
     for (let t = openM; t + duration <= closeM; t += Number(interval)) {
       if (t < minStart) continue;
-      const used = peakOverlap(taken, t, t + Math.max(duration, 1));
-      if (used < bays) slots.push({ start: t, free: bays - used });
+      const teams = freeTeams(dateStr, t, duration);
+      if (teams.length) slots.push({ start: t, teams });
     }
     return slots;
   }
@@ -118,20 +140,22 @@
     $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${name}`));
     if (name === 'admin') renderAdmin();
     if (name === 'mine') renderMine();
-    if (name === 'book' && state.step === 1) renderServices();
+    if (name === 'book' && state.step === 1) renderZones();
   }
   $$('.tab').forEach((t) => t.addEventListener('click', () => showView(t.dataset.view)));
 
   // ---------- Booking flow ----------
-  const state = { step: 1, serviceId: null, vehicleId: null, addonIds: [], date: null, start: null, month: null, lastBooking: null };
+  const state = { step: 1, zoneId: null, serviceId: null, vehicleId: null, addonIds: [], date: null, start: null, month: null, lastBooking: null };
 
   function quote() {
     const svc = serviceById(state.serviceId);
     const veh = vehicleById(state.vehicleId) || db.vehicles[0] || { price: 0, duration: 0, label: '' };
+    const zone = zoneById(state.zoneId) || { name: '', fee: 0 };
     const extras = state.addonIds.map(serviceById).filter(Boolean);
+    const extrasPrice = extras.reduce((s, a) => s + Number(a.price), 0);
     return {
-      svc, veh, extras,
-      price: Number(svc.price) + Number(veh.price) + extras.reduce((s, a) => s + Number(a.price), 0),
+      svc, veh, zone, extras,
+      price: Number(svc.price) + Number(veh.price) + extrasPrice + Number(zone.fee),
       duration: Number(svc.duration) + Number(veh.duration) + extras.reduce((s, a) => s + Number(a.duration), 0),
     };
   }
@@ -144,19 +168,38 @@
       li.classList.toggle('current', s === n);
       li.classList.toggle('done', s < n);
     });
-    if (n === 1) renderServices();
-    if (n === 2) renderExtras();
-    if (n === 3) renderCalendar();
-    if (n === 4) renderSummary();
+    if (n === 1) renderZones();
+    if (n === 2) renderServices();
+    if (n === 3) renderExtras();
+    if (n === 4) renderCalendar();
+    if (n === 5) renderSummary();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
   $$('[data-back]').forEach((b) => b.addEventListener('click', () => goStep(Number(b.dataset.back))));
 
+  function renderZones() {
+    const box = $('#zoneOptions');
+    if (!db.zones.length) {
+      box.innerHTML = '<p class="muted">No service areas set up yet. Add some in Admin → Pricing.</p>';
+      return;
+    }
+    box.innerHTML = db.zones.map((z) => `
+      <button class="option zone ${z.id === state.zoneId ? 'chosen' : ''}" data-id="${esc(z.id)}">
+        <span class="opt-name">📍 ${esc(z.name)}</span>
+        <span class="opt-meta">${Number(z.fee) ? `Travel fee ${amount(z.fee)}` : 'No travel fee'}</span>
+      </button>`).join('');
+    $$('.zone', box).forEach((b) => b.addEventListener('click', () => {
+      state.zoneId = b.dataset.id;
+      goStep(2);
+    }));
+  }
+
   function renderServices() {
+    if (!zoneById(state.zoneId)) return goStep(1);
     const grid = $('#serviceGrid');
     const list = packages();
     if (!list.length) {
-      grid.innerHTML = '<p class="muted">No wash packages yet. Add some in Admin → Packages.</p>';
+      grid.innerHTML = '<p class="muted">No wash packages yet. Add some in Admin → Pricing.</p>';
       return;
     }
     grid.innerHTML = list.map((s) => `
@@ -170,13 +213,13 @@
       state.date = null; state.start = null;
       if (!vehicleById(state.vehicleId)) state.vehicleId = db.vehicles[0]?.id || null;
       state.addonIds = state.addonIds.filter((id) => serviceById(id));
-      goStep(2);
+      goStep(3);
     }));
   }
 
   function renderExtras() {
     const svc = serviceById(state.serviceId);
-    if (!svc) return goStep(1);
+    if (!svc) return goStep(2);
     $('#packageLabel').textContent = `${svc.name} — ${svc.description || ''}`;
     $('#vehicleOptions').innerHTML = db.vehicles.map((v) => `
       <label class="option">
@@ -200,19 +243,21 @@
   }
   function updateTotal() {
     const q = quote();
-    $('#runningTotal').textContent = `${money(q.price)} · ${fmtDur(q.duration)}`;
+    $('#runningTotal').textContent = `${money(q.price)} · about ${fmtDur(q.duration)}`;
+    $('#totalBreakdown').textContent = Number(q.zone.fee)
+      ? `Includes ${amount(q.zone.fee)} travel fee to ${q.zone.name}` : `No travel fee to ${q.zone.name}`;
   }
   $('#toTime').addEventListener('click', () => {
     const t = startOfToday();
     state.month = new Date(t.getFullYear(), t.getMonth(), 1);
-    goStep(3);
+    goStep(4);
   });
 
   function renderCalendar() {
-    if (!serviceById(state.serviceId)) return goStep(1);
+    if (!serviceById(state.serviceId)) return goStep(2);
     const q = quote();
     $('#selectedServiceLabel').textContent =
-      `${q.svc.name} · ${q.veh.label}${q.extras.length ? ' · ' + q.extras.map((a) => a.name).join(', ') : ''} · ${fmtDur(q.duration)} · ${money(q.price)}`;
+      `${q.svc.name} · ${q.veh.label}${q.extras.length ? ' · ' + q.extras.map((a) => a.name).join(', ') : ''} · ${q.zone.name} · about ${fmtDur(q.duration)} · ${money(q.price)}`;
     const m = state.month;
     $('#monthLabel').textContent = m.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
     const today = startOfToday();
@@ -240,19 +285,21 @@
 
   function renderSlots(duration) {
     const list = $('#slotList');
+    const w = Number(db.settings.arrivalWindow);
+    $('#windowNote').textContent = w > 0 ? `Pick an arrival window — our team will arrive within ${w} minutes of the start time.` : '';
     if (!state.date) {
       $('#slotsTitle').textContent = 'Select a date';
-      list.innerHTML = '<p class="muted">Available times will appear here.</p>';
+      list.innerHTML = '<p class="muted">Available arrival times will appear here.</p>';
       return;
     }
     const slots = availableSlots(state.date, duration);
     $('#slotsTitle').textContent = fmtDate(state.date, { weekday: 'long', month: 'long', day: 'numeric' });
     list.innerHTML = slots.length
-      ? slots.map((s) => `<button class="slot" data-start="${s.start}">${fmtTime(s.start)}${s.free === 1 && db.settings.bays > 1 ? '<small>1 bay left</small>' : ''}</button>`).join('')
+      ? slots.map((s) => `<button class="slot wide" data-start="${s.start}">${fmtWindow(s.start)}${s.teams.length === 1 && db.settings.teams > 1 ? '<small>Last team available</small>' : ''}</button>`).join('')
       : '<p class="muted">No times left on this day.</p>';
     $$('.slot', list).forEach((b) => b.addEventListener('click', () => {
       state.start = Number(b.dataset.start);
-      goStep(4);
+      goStep(5);
     }));
   }
 
@@ -265,8 +312,9 @@
       <div><span>Package</span>${esc(q.svc.name)}</div>
       <div><span>Vehicle</span>${esc(q.veh.label)}</div>
       ${q.extras.length ? `<div><span>Add-ons</span>${q.extras.map((a) => esc(a.name)).join(', ')}</div>` : ''}
+      <div><span>Area</span>${esc(q.zone.name)}</div>
       <div><span>Date</span>${fmtDate(state.date)}</div>
-      <div><span>Time</span>${fmtTime(state.start)} – ${fmtTime(state.start + q.duration)}</div>
+      <div><span>Arrival</span>${fmtWindow(state.start)}</div>
       <div><span>Total</span><strong>${money(q.price)}</strong></div>`;
     $('#formError').textContent = '';
   }
@@ -274,29 +322,42 @@
   $('#detailsForm').addEventListener('submit', (e) => {
     e.preventDefault();
     const f = e.target;
-    const data = Object.fromEntries([...new FormData(f)].map(([k, v]) => [k, String(v).trim()]));
+    const fd = new FormData(f);
+    const data = Object.fromEntries([...fd].map(([k, v]) => [k, String(v).trim()]));
     const err = $('#formError');
-    if (!data.name) return (err.textContent = 'Please enter your name.');
-    if (!data.phone) return (err.textContent = 'Please enter a phone number so we can reach you.');
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) return (err.textContent = 'Please enter a valid email.');
+    if (!data.address) return (err.textContent = 'Please enter the address where the car will be.');
     if (!data.make) return (err.textContent = 'Please enter your vehicle make and model.');
+    if (!data.name) return (err.textContent = 'Please enter your name.');
+    if (!data.phone) return (err.textContent = 'Please enter a mobile number so the team can call when they arrive.');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) return (err.textContent = 'Please enter a valid email.');
 
     const q = quote();
-    // Re-check capacity (another tab may have taken the last bay).
-    if (!availableSlots(state.date, q.duration).some((s) => s.start === state.start)) {
+    // Re-check a team is still free (another tab may have taken it).
+    const teams = freeTeams(state.date, state.start, q.duration);
+    if (!teams.length || !availableSlots(state.date, q.duration).some((s) => s.start === state.start)) {
       err.textContent = 'Sorry, that time was just taken. Please pick another.';
-      return setTimeout(() => goStep(3), 1200);
+      return setTimeout(() => goStep(4), 1200);
     }
     const booking = {
       id: uid(),
+      team: teams[0],
       serviceId: q.svc.id,
       serviceName: q.svc.name,
       vehicleType: q.veh.label,
       addons: q.extras.map((a) => a.name),
+      zone: q.zone.name,
+      travelFee: Number(q.zone.fee),
       price: q.price,
       duration: q.duration,
       date: state.date,
       start: state.start,
+      address: data.address,
+      town: data.town,
+      postcode: data.postcode.toUpperCase(),
+      access: data.access,
+      water: fd.has('water'),
+      power: fd.has('power'),
+      notHome: fd.has('notHome'),
       name: data.name,
       email: data.email.toLowerCase(),
       phone: data.phone,
@@ -315,14 +376,15 @@
     $('#confirmation').innerHTML = `
       <p><strong>${esc(booking.serviceName)}</strong>${booking.addons.length ? ' + ' + booking.addons.map(esc).join(', ') : ''}<br>
       ${esc([booking.color, booking.make].filter(Boolean).join(' '))}${booking.plate ? ` (${esc(booking.plate)})` : ''}<br>
-      ${fmtDate(booking.date, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}<br>
-      ${fmtTime(booking.start)} – ${fmtTime(booking.start + booking.duration)} · ${money(booking.price)} payable on arrival</p>
-      <p>Reference <span class="ref">${esc(booking.id)}</span></p>
-      <p class="muted">Please arrive 5 minutes early and remove valuables from the car.</p>`;
-    goStep(5);
+      📍 ${esc(fullAddress(booking))}</p>
+      <p><strong>${fmtDate(booking.date, { weekday: 'long', month: 'long', day: 'numeric' })}</strong><br>
+      Team arrives between <strong>${fmtWindow(booking.start)}</strong> · takes about ${fmtDur(booking.duration)}</p>
+      <p>${money(booking.price)} payable when the job is done · Reference <span class="ref">${esc(booking.id)}</span></p>
+      <p class="muted">We'll call ${esc(booking.phone)} when we're on the way. Please make sure the car is reachable and remove valuables.</p>`;
+    goStep(6);
   });
 
-  $('#bookAnother').addEventListener('click', () => { state.addonIds = []; goStep(1); });
+  $('#bookAnother').addEventListener('click', () => { state.addonIds = []; goStep(2); });
   $('#viewMine').addEventListener('click', () => {
     $('#lookupForm').query.value = state.lastBooking?.email || '';
     showView('mine');
@@ -348,7 +410,8 @@
       return `<div class="card item">
         <div>
           <div class="title">${esc(b.serviceName)} <span class="badge ${b.status}">${b.status}</span></div>
-          <div class="muted">${fmtDate(b.date)} · ${fmtTime(b.start)} – ${fmtTime(b.start + b.duration)} · ${money(b.price)}</div>
+          <div class="muted">${fmtDate(b.date)} · arrival ${fmtWindow(b.start)} · ${money(b.price)}</div>
+          <div class="muted small">📍 ${esc(fullAddress(b))}</div>
           <div class="muted small">${esc(b.make)}${b.plate ? ' · ' + esc(b.plate) : ''}${b.addons?.length ? ' · ' + b.addons.map(esc).join(', ') : ''} · Ref ${esc(b.id)}</div>
         </div>
         ${future ? `<button class="btn small danger" data-cancel="${esc(b.id)}">Cancel</button>` : ''}
@@ -375,10 +438,19 @@
   }));
 
   function renderAdmin() {
+    renderTeamFilter();
     renderStats();
     renderBookingTable();
     renderServiceAdmin();
     fillSettings();
+  }
+
+  function renderTeamFilter() {
+    const sel = $('#teamFilter');
+    const cur = sel.value || 'all';
+    sel.innerHTML = '<option value="all">All teams</option>' +
+      Array.from({ length: db.settings.teams }, (_, i) => `<option value="${i + 1}">Team ${i + 1}</option>`).join('');
+    sel.value = [...sel.options].some((o) => o.value === cur) ? cur : 'all';
   }
 
   function renderStats() {
@@ -386,50 +458,62 @@
     const todayISO = isoDate(now);
     const today = db.bookings.filter((b) => b.date === todayISO && b.status !== 'cancelled');
     const upcoming = db.bookings.filter((b) => b.status === 'confirmed' && bookingStart(b) > now);
-    const todayRevenue = today.reduce((s, b) => s + b.price, 0);
+    const todayValue = today.reduce((s, b) => s + b.price, 0);
     const revenue = db.bookings.filter((b) => b.status === 'completed').reduce((s, b) => s + b.price, 0);
     const stats = [
-      ['Cars today', today.length],
-      ["Today's bookings value", amount(todayRevenue)],
-      ['Upcoming', upcoming.length],
+      ['Jobs today', today.length],
+      ["Today's jobs value", amount(todayValue)],
+      ['Upcoming jobs', upcoming.length],
       ['Completed revenue', amount(revenue)],
     ];
     $('#stats').innerHTML = stats.map(([l, v]) => `<div class="card stat"><b>${v}</b><span>${l}</span></div>`).join('');
   }
 
   $('#statusFilter').addEventListener('change', renderBookingTable);
+  $('#teamFilter').addEventListener('change', renderBookingTable);
   $('#searchBox').addEventListener('input', renderBookingTable);
 
   function renderBookingTable() {
     const filter = $('#statusFilter').value;
+    const team = $('#teamFilter').value;
     const q = $('#searchBox').value.trim().toLowerCase();
     const now = new Date();
     let rows = db.bookings.slice();
     if (filter === 'upcoming') rows = rows.filter((b) => b.status === 'confirmed' && bookingStart(b) > now);
     else if (filter === 'today') rows = rows.filter((b) => b.date === isoDate(now));
     else if (filter !== 'all') rows = rows.filter((b) => b.status === filter);
-    if (q) rows = rows.filter((b) => [b.name, b.email, b.phone, b.serviceName, b.make, b.color, b.plate, b.vehicleType, b.id].join(' ').toLowerCase().includes(q));
+    if (team !== 'all') rows = rows.filter((b) => String(b.team) === team);
+    if (q) rows = rows.filter((b) => [b.name, b.email, b.phone, b.serviceName, b.make, b.color, b.plate, b.vehicleType,
+      b.address, b.town, b.postcode, b.zone, b.id].join(' ').toLowerCase().includes(q));
     const asc = filter === 'upcoming' || filter === 'today';
-    rows.sort((a, b) => asc ? bookingStart(a) - bookingStart(b) : bookingStart(b) - bookingStart(a));
+    rows.sort((a, b) => (asc ? 1 : -1) * (bookingStart(a) - bookingStart(b)) || a.team - b.team);
 
     $('#noRows').classList.toggle('hidden', rows.length > 0);
-    $('#bookingRows').innerHTML = rows.map((b) => `
+    $('#bookingRows').innerHTML = rows.map((b) => {
+      const site = [b.water ? '💧 tap' : '🚫 no tap', b.power ? '🔌 power' : '🚫 no power'].join(' · ');
+      return `
       <tr>
-        <td>${fmtDate(b.date)}<small>${fmtTime(b.start)} – ${fmtTime(b.start + b.duration)}</small></td>
-        <td>${esc(b.serviceName)}<small>${money(b.price)}</small>${b.addons?.length ? `<small>+ ${b.addons.map(esc).join(', ')}</small>` : ''}</td>
+        <td>${fmtDate(b.date)}<small>Arrive ${fmtWindow(b.start)}</small><small>~${fmtDur(b.duration)}</small></td>
+        <td><span class="team-chip">T${b.team}</span></td>
+        <td><a href="${esc(mapUrl(b))}" target="_blank" rel="noopener">${esc(b.address)}</a>
+          <small>${esc([b.town, b.postcode].filter(Boolean).join(' '))} · ${esc(b.zone)}</small>
+          ${b.access ? `<small>🔑 ${esc(b.access)}</small>` : ''}
+          <small>${site}${b.notHome ? ' · customer away' : ''}</small></td>
+        <td>${esc(b.serviceName)}<small>${money(b.price)}${b.travelFee ? ` (incl. ${amount(b.travelFee)} travel)` : ''}</small>${b.addons?.length ? `<small>+ ${b.addons.map(esc).join(', ')}</small>` : ''}</td>
         <td>${esc([b.color, b.make].filter(Boolean).join(' '))}<small>${esc(b.plate || '—')} · ${esc(b.vehicleType)}</small></td>
-        <td>${esc(b.name)}<small>${esc(b.phone)}</small><small>${esc(b.email)}</small>${b.notes ? `<small>“${esc(b.notes)}”</small>` : ''}</td>
+        <td>${esc(b.name)}<small><a href="tel:${esc(b.phone)}">${esc(b.phone)}</a></small><small>${esc(b.email)}</small>${b.notes ? `<small>“${esc(b.notes)}”</small>` : ''}</td>
         <td><span class="badge ${b.status}">${b.status}</span></td>
         <td class="act">
           ${b.status === 'confirmed' ? `<button class="btn small" data-act="completed" data-id="${esc(b.id)}">Done</button>
           <button class="btn small danger" data-act="cancelled" data-id="${esc(b.id)}">Cancel</button>` : ''}
           ${b.status !== 'confirmed' ? `<button class="btn small" data-act="delete" data-id="${esc(b.id)}">Delete</button>` : ''}
         </td>
-      </tr>`).join('');
+      </tr>`;
+    }).join('');
     $$('#bookingRows [data-act]').forEach((btn) => btn.addEventListener('click', () => {
       const { act, id } = btn.dataset;
       if (act === 'delete') {
-        if (!confirm('Delete this booking permanently?')) return;
+        if (!confirm('Delete this job permanently?')) return;
         db.bookings = db.bookings.filter((b) => b.id !== id);
         save();
       } else {
@@ -440,7 +524,7 @@
     }));
   }
 
-  // Packages, add-ons and vehicle surcharges
+  // Pricing: packages, add-ons, service areas, vehicle surcharges
   const sForm = $('#serviceForm');
   function itemRow(s) {
     return `<div class="card item">
@@ -471,7 +555,45 @@
       db.services = db.services.filter((s) => s.id !== b.dataset.del);
       save(); renderServiceAdmin(); toast('Deleted');
     }));
+    renderZoneAdmin();
+    renderVehicleAdmin();
+  }
 
+  // Service areas (editable list with add/remove)
+  let zoneDraft = null;
+  function readZoneInputs() {
+    $$('#zoneAdminList [data-z]').forEach((inp) => {
+      const z = zoneDraft[Number(inp.dataset.z)];
+      if (inp.dataset.f === 'name') z.name = inp.value;
+      else z.fee = Math.max(0, Number(inp.value) || 0);
+    });
+  }
+  function renderZoneAdmin(keepDraft) {
+    if (!keepDraft) zoneDraft = db.zones.map((z) => ({ ...z }));
+    $('#zoneAdminList').innerHTML = zoneDraft.map((z, i) => `
+      <div class="row vehicle-row">
+        <label>Area <input data-z="${i}" data-f="name" value="${esc(z.name)}" /></label>
+        <label>Travel fee <input data-z="${i}" data-f="fee" type="number" min="0" step="0.01" value="${z.fee}" /></label>
+        <button type="button" class="btn small danger align-end" data-zdel="${i}">Remove</button>
+      </div>`).join('') + `<div class="actions">
+        <button class="btn ghost" id="addZone" type="button">+ Add area</button>
+        <button class="btn primary" id="saveZones" type="button">Save areas</button></div>`;
+    $$('[data-zdel]').forEach((b) => b.addEventListener('click', () => {
+      readZoneInputs(); zoneDraft.splice(Number(b.dataset.zdel), 1); renderZoneAdmin(true);
+    }));
+    $('#addZone').addEventListener('click', () => {
+      readZoneInputs(); zoneDraft.push({ id: uid(), name: '', fee: 0 }); renderZoneAdmin(true);
+      $$('#zoneAdminList [data-f=name]').pop().focus();
+    });
+    $('#saveZones').addEventListener('click', () => {
+      readZoneInputs();
+      db.zones = zoneDraft.filter((z) => z.name.trim()).map((z) => ({ ...z, name: z.name.trim() }));
+      if (!zoneById(state.zoneId)) state.zoneId = null;
+      save(); renderZoneAdmin(); toast('Service areas saved');
+    });
+  }
+
+  function renderVehicleAdmin() {
     $('#vehicleAdminList').innerHTML = db.vehicles.map((v, i) => `
       <div class="row vehicle-row">
         <label>Vehicle size <input data-v="${i}" data-f="label" value="${esc(v.label)}" /></label>
@@ -487,6 +609,7 @@
       save(); toast('Surcharges saved');
     });
   }
+
   function resetServiceForm() {
     sForm.reset(); sForm.id.value = '';
     $('#serviceFormTitle').textContent = 'Add a package or add-on';
@@ -519,39 +642,41 @@
     `<label><input type="checkbox" value="${d}" /> ${DAY_NAMES[d]}</label>`).join('');
   function fillSettings() {
     const s = db.settings;
-    setForm.businessName.value = s.businessName; setForm.open.value = s.open; setForm.close.value = s.close;
-    setForm.interval.value = s.interval; setForm.bays.value = s.bays; setForm.currency.value = s.currency;
+    for (const k of ['businessName', 'open', 'close', 'interval', 'teams', 'travelBuffer', 'arrivalWindow', 'currency']) setForm[k].value = s[k];
     $$('#dayChecks input').forEach((c) => { c.checked = s.openDays.includes(Number(c.value)); });
     $('#settingsSaved').textContent = '';
   }
   setForm.addEventListener('submit', (e) => {
     e.preventDefault();
     if (toMin(setForm.close.value) <= toMin(setForm.open.value)) {
-      $('#settingsSaved').textContent = 'Closing time must be after opening time.';
+      $('#settingsSaved').textContent = '"Finish by" must be after "First arrival".';
       return;
     }
+    const int = (v, d, lo, hi = Infinity) => Math.min(hi, Math.max(lo, Number.isFinite(parseInt(v, 10)) ? parseInt(v, 10) : d));
     Object.assign(db.settings, {
-      businessName: setForm.businessName.value.trim() || 'Car Wash',
+      businessName: setForm.businessName.value.trim() || 'Mobile Car Wash',
       open: setForm.open.value,
       close: setForm.close.value,
-      interval: Math.max(5, parseInt(setForm.interval.value, 10) || 15),
-      bays: Math.min(50, Math.max(1, parseInt(setForm.bays.value, 10) || 1)),
+      interval: int(setForm.interval.value, 30, 5),
+      teams: int(setForm.teams.value, 1, 1, 50),
+      travelBuffer: int(setForm.travelBuffer.value, 30, 0),
+      arrivalWindow: int(setForm.arrivalWindow.value, 30, 0),
       currency: setForm.currency.value || '$',
       openDays: $$('#dayChecks input:checked').map((c) => Number(c.value)),
     });
-    save(); applyBranding();
+    save(); applyBranding(); renderTeamFilter();
     $('#settingsSaved').textContent = 'Saved.';
     toast('Settings saved');
   });
   $('#resetData').addEventListener('click', () => {
-    if (!confirm('This deletes all packages, bookings and settings. Continue?')) return;
-    db = DEFAULTS(); save(); applyBranding(); renderAdmin(); goStep(1);
+    if (!confirm('This deletes all pricing, bookings and settings. Continue?')) return;
+    db = DEFAULTS(); save(); applyBranding(); renderAdmin(); state.zoneId = null; goStep(1);
     toast('Data reset');
   });
 
   function applyBranding() {
     $('#businessName').textContent = db.settings.businessName;
-    document.title = `${db.settings.businessName} — Book a wash`;
+    document.title = `${db.settings.businessName} — Book a home car wash`;
   }
 
   // ---------- Init ----------
