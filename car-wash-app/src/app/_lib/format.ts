@@ -16,6 +16,12 @@ export function formatInZone(iso: string | Date, timeZone: string, opts: Intl.Da
   }).format(typeof iso === "string" ? new Date(iso) : iso);
 }
 
+/** Just the zone's long name, e.g. "Eastern Standard Time" (DST-aware for that instant). */
+export function zoneName(iso: string | Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "long" }).formatToParts(typeof iso === "string" ? new Date(iso) : iso);
+  return parts.find((p) => p.type === "timeZoneName")?.value ?? timeZone;
+}
+
 export const STATUS_LABEL: Record<string, string> = {
   PENDING_PAYMENT: "Awaiting payment",
   CONFIRMED: "Confirmed",

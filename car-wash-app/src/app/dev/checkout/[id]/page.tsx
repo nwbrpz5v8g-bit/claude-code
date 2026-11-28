@@ -18,10 +18,11 @@ export default async function FakeCheckoutPage({ params }: { params: Promise<{ i
   if (!result.ok) notFound();
   const b = result.value;
   return (
-    <div className="card">
-      <p className="notice warn">Test checkout: no real payment is taken.</p>
-      <h1>Pay {formatPrice(b.priceCents, b.currency)}</h1>
-      <p>{b.packageName}</p>
+    <div className="panel" style={{ maxWidth: 460, margin: "24px auto" }}>
+      <p className="notice warn" style={{ fontSize: 14 }}>Test checkout: no real payment is taken.</p>
+      <p className="eyebrow">Checkout</p>
+      <h1>{formatPrice(b.priceCents, b.currency)}</h1>
+      <p className="muted">{b.packageName}</p>
       <FakeCheckout bookingId={b.id} />
     </div>
   );

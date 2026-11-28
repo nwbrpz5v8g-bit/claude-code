@@ -1,5 +1,6 @@
 import { PAYMENT_HOLD_MINUTES, type Booking } from "@/domain/booking/booking";
 import { localDateOf } from "@/domain/availability/localTime";
+import { quoteSlot } from "@/domain/pricing/quote";
 import { err, ok, type Result } from "@/domain/shared/result";
 import type { DomainError } from "@/domain/shared/errors";
 import type { BookingId, LocationId, PackageId } from "@/domain/shared/ids";
@@ -22,7 +23,7 @@ export type BookWashInput = {
   packageId: PackageId;
   /** UTC instant of the chosen slot, exactly as returned by availability. */
   startsAt: Date;
-  /** Price the customer saw. If the catalog changed since, we refuse rather than surprise-charge. */
+  /** Slot price the customer saw (after any discount). If it changed since, we refuse rather than surprise-charge. */
   expectedPriceCents: number;
   /** Client-generated per checkout attempt; makes retries and double-clicks safe. */
   idempotencyKey: string;
@@ -48,9 +49,6 @@ export async function bookWash(
   ]);
   if (!location || !location.isActive) return err({ kind: "NotFound", entity: "Location" });
   if (!pkg || !pkg.isActive) return err({ kind: "NotFound", entity: "Package" });
-  if (pkg.priceCents !== input.expectedPriceCents) {
-    return err({ kind: "Validation", issues: [{ path: "expectedPriceCents", message: "The price has changed; please review and try again" }] });
-  }
 
   // 3. Re-derive the slot server-side. Never trust a client-supplied time or bay.
   const now = deps.clock.now();
@@ -60,6 +58,18 @@ export async function bookWash(
   if (day.closedReason) return err({ kind: "LocationClosed", date: localDate, reason: day.closedReason });
   const slot = day.slots.find((s) => s.startsAt.getTime() === input.startsAt.getTime());
   if (!slot) return err({ kind: "SlotUnavailable", startsAt: input.startsAt.toISOString() });
+
+  // 3b. Price the slot server-side (Quiet Hours discount) and make sure it matches what the customer saw.
+  const quote = quoteSlot({
+    basePriceCents: pkg.priceCents,
+    startsAt: slot.startsAt,
+    timezone: location.timezone,
+    freeBays: slot.freeBayIds.length,
+    totalBays: location.activeBayIds.length,
+  });
+  if (quote.priceCents !== input.expectedPriceCents) {
+    return err({ kind: "Validation", issues: [{ path: "expectedPriceCents", message: "The price has changed; please review and try again" }] });
+  }
 
   // 4. Claim a bay. The DB exclusion constraint is the source of truth under concurrency:
   //    if another request won the race for a bay, try the next free one.
@@ -72,7 +82,7 @@ export async function bookWash(
       bayId,
       packageId: pkg.id,
       packageName: pkg.name,
-      priceCents: pkg.priceCents,
+      priceCents: quote.priceCents,
       currency: pkg.currency,
       startsAt: slot.startsAt,
       endsAt: slot.endsAt,

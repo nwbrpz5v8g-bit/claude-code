@@ -1,8 +1,23 @@
-# Car Wash: booking app
+# SUDS: car wash, sorted
 
 A Next.js (App Router) app for booking car washes. It covers availability across
 time zones, booking with a payment hold, payment confirmation via webhook, and
 customer cancellation with a refund policy.
+
+## What makes it SUDS
+
+- **Quiet Hours pricing.** Weekday slots from 13:00 to 16:00 local time are 20% off, to move demand off
+  the weekend rush. The price is computed server-side per slot (`domain/pricing/quote.ts`), checked
+  against what the customer saw, and snapshotted on the booking.
+- **Crowd forecast.** Every slot shows **Calm / Steady / Busy** from the share of free bays, so customers
+  can pick a time with no wait.
+- **Wash Pass.** The confirmation is a ticket with a short check-in code (`SUDS-7K3Q-M2`), derived from
+  the booking id in Crockford base32 so it is easy to read out at the bay (`domain/booking/checkInCode.ts`).
+  It identifies a booking but grants nothing on its own; staff check-in will verify it with the date and location.
+- **Night-wash identity.** Ink blue, aqua foam and neon pink, with Bricolage Grotesque for display text.
+  Packages are shown as foam levels, days as a scrollable strip, slots as a timeline grouped by
+  morning, afternoon and evening, and the price sits in a sticky bar showing the discount.
+  Light and dark themes are included, and the bubble animations are disabled under `prefers-reduced-motion`.
 
 ## Run it locally
 
@@ -88,8 +103,8 @@ it is mapped. Unexpected exceptions become an opaque 500 with a request id, logg
   Another customer's booking returns 404, never 403, so ids cannot be probed.
 - **Rate limits.** Per user or IP sliding windows (booking 5/min, availability 60/min, login 10/15 min)
   return 429 with `Retry-After`. Stripe calls retry with backoff.
-- **Price changes.** The client sends the price it showed, and a mismatch is rejected. Bookings
-  snapshot the price and package name.
+- **Price changes.** The client sends the slot price it showed (after any Quiet Hours discount), and a
+  mismatch is rejected. Bookings snapshot the price and package name.
 - **Concurrent edits.** Optimistic locking (`version` column) returns `Conflict: StaleVersion`.
 - **Empty states.** No locations, no packages, closed day or blackout (with the next available
   date), fully booked, and no bookings yet.

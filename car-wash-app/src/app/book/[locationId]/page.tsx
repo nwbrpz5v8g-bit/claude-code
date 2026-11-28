@@ -5,6 +5,7 @@ import { addDays, localDateOf } from "@/domain/availability/localTime";
 import { MAX_DAYS_AHEAD } from "@/application/use-cases/getAvailability";
 import { container } from "@/server/container";
 import { currentActor } from "@/server/auth/session";
+import { Bubbles } from "../../_components/Brand";
 import { BookingForm } from "./BookingForm";
 
 export const dynamic = "force-dynamic";
@@ -36,16 +37,26 @@ export default async function BookPage({
   const today = localDateOf(c.clock.now(), location.timezone);
   return (
     <>
-      <h1>{location.name}</h1>
-      <p className="muted">{location.address}</p>
+      <section className="hero" style={{ paddingBottom: 8 }}>
+        <Bubbles count={8} />
+        <p className="eyebrow">Book a bay</p>
+        <h1>{location.name}</h1>
+        <p style={{ margin: 0 }}>{location.address}</p>
+      </section>
       {packages.length === 0 ? (
-        <div className="card empty">
+        <div className="panel empty">
+          <div className="art" aria-hidden="true">🧽</div>
           <h2>No wash packages available right now</h2>
           <p className="muted">Please check back later.</p>
         </div>
       ) : (
         <BookingForm
-          location={{ id: location.id, timezone: location.timezone }}
+          location={{
+            id: location.id,
+            timezone: location.timezone,
+            openDays: location.hours.map((h) => h.dayOfWeek),
+            blackouts: location.blackoutDates.map((b) => b.date),
+          }}
           packages={packages.map((p) => ({
             id: p.id, name: p.name, description: p.description, durationMin: p.durationMin, priceCents: p.priceCents, currency: p.currency,
           }))}

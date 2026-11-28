@@ -11,7 +11,7 @@ export function LoginForm({ returnTo }: { returnTo: string }) {
 
   return (
     <form
-      className="row"
+      className="stack"
       onSubmit={async (e) => {
         e.preventDefault();
         setBusy(true);
@@ -26,10 +26,10 @@ export function LoginForm({ returnTo }: { returnTo: string }) {
         router.refresh();
       }}
     >
-      <label htmlFor="email" className="muted">Email</label>
+      <label htmlFor="email">Email</label>
       <input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
-      <button className="primary" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
-      {error && <p className="notice error" role="alert" style={{ width: "100%" }}>{error}</p>}
+      <button className="btn btn-primary btn-lg" disabled={busy}>{busy ? "Signing in…" : "Continue"}</button>
+      {error && <p className="notice error" role="alert">{error}</p>}
     </form>
   );
 }

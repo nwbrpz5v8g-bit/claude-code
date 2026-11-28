@@ -13,8 +13,8 @@ export function FakeCheckout({ bookingId }: { bookingId: string }) {
   };
   return (
     <div className="row">
-      <button className="primary" onClick={() => send("pay")}>Pay now</button>
-      <button onClick={() => send("abandon")}>Let the checkout expire</button>
+      <button className="btn btn-primary btn-lg" onClick={() => send("pay")}>Pay now</button>
+      <button className="btn" onClick={() => send("abandon")}>Let it expire</button>
       {error && <p className="notice error" role="alert">{error}</p>}
     </div>
   );

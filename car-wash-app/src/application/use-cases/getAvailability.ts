@@ -1,5 +1,6 @@
 import { addDays, isValidLocalDate, localDateOf, wallTimeToUtc } from "@/domain/availability/localTime";
 import { computeDayAvailability, type Slot } from "@/domain/availability/slots";
+import { quoteSlot, type SlotQuote } from "@/domain/pricing/quote";
 import { err, ok, type Result } from "@/domain/shared/result";
 import { validation, type DomainError } from "@/domain/shared/errors";
 import type { LocationId, PackageId } from "@/domain/shared/ids";
@@ -14,7 +15,7 @@ export type AvailabilityView = {
   readonly location: { id: LocationId; name: string; timezone: string };
   readonly localDate: string;
   readonly closedReason: string | null;
-  readonly slots: ReadonlyArray<Omit<Slot, "freeBayIds"> & { freeBays: number }>;
+  readonly slots: ReadonlyArray<Omit<Slot, "freeBayIds"> & { freeBays: number } & SlotQuote>;
   /** When the requested day has no slots, the next day (within the search horizon) that does. */
   readonly nextAvailableDate: string | null;
 };
@@ -61,7 +62,17 @@ export async function getAvailability(
     location: { id: location.id, name: location.name, timezone: location.timezone },
     localDate,
     closedReason: day.closedReason,
-    slots: day.slots.map(({ freeBayIds, ...s }) => ({ ...s, freeBays: freeBayIds.length })),
+    slots: day.slots.map(({ freeBayIds, ...s }) => ({
+      ...s,
+      freeBays: freeBayIds.length,
+      ...quoteSlot({
+        basePriceCents: pkg.priceCents,
+        startsAt: s.startsAt,
+        timezone: location.timezone,
+        freeBays: freeBayIds.length,
+        totalBays: location.activeBayIds.length,
+      }),
+    })),
     nextAvailableDate,
   });
 }

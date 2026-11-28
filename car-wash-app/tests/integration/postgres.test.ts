@@ -13,15 +13,19 @@ import { FakePayments, FixedClock, silentLogger } from "../support/fakes";
 const url = process.env.TEST_DATABASE_URL;
 
 describe.skipIf(!url)("Postgres integration", () => {
-  const db = new PrismaClient({ datasources: { db: { url: url! } } });
-  const bookings = new PrismaBookingRepository(db);
-  const catalog = new PrismaCatalogRepository(db);
+  // Constructed lazily: a skipped suite still runs this body during collection.
+  let db: PrismaClient;
+  let bookings: PrismaBookingRepository;
+  let catalog: PrismaCatalogRepository;
   let locationId: string;
   let packageId: string;
   let bayIds: string[];
   let actors: Actor[];
 
   beforeAll(async () => {
+    db = new PrismaClient({ datasources: { db: { url: url! } } });
+    bookings = new PrismaBookingRepository(db);
+    catalog = new PrismaCatalogRepository(db);
     await db.$connect();
   });
   afterAll(async () => {

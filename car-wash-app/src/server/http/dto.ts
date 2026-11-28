@@ -1,4 +1,5 @@
 import type { Booking } from "@/domain/booking/booking";
+import { checkInCode } from "@/domain/booking/checkInCode";
 
 /** Wire format for a booking in API v1. Add fields freely; never remove or rename. */
 export type BookingDto = {
@@ -14,6 +15,8 @@ export type BookingDto = {
   refundedCents: number;
   holdExpiresAt: string | null;
   version: number;
+  /** Added in v1.1: short code shown on the Wash Pass and spoken at the bay. */
+  checkInCode: string;
 };
 
 export const toBookingDto = (b: Booking): BookingDto => ({
@@ -29,4 +32,5 @@ export const toBookingDto = (b: Booking): BookingDto => ({
   refundedCents: b.refundedCents,
   holdExpiresAt: b.holdExpiresAt?.toISOString() ?? null,
   version: b.version,
+  checkInCode: checkInCode(b.id),
 });

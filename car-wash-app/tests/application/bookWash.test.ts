@@ -122,7 +122,35 @@ describe("bookWash", () => {
   });
 });
 
+describe("bookWash pricing", () => {
+  const QUIET_SLOT = new Date("2026-06-10T18:00:00Z"); // Wed 14:00 New York
+
+  it("charges the Quiet Hours price and snapshots it on the booking", async () => {
+    const deps = makeDeps(NOW);
+    const r = await bookWash(deps, alice, input({ startsAt: QUIET_SLOT, expectedPriceCents: 1600 }));
+    expect(r.ok).toBe(true);
+    expect([...deps.bookings.rows.values()][0]!.priceCents).toBe(1600);
+  });
+
+  it("refuses a client that sends the full price for a discounted slot, or vice versa", async () => {
+    const deps = makeDeps(NOW);
+    expect((await bookWash(deps, alice, input({ startsAt: QUIET_SLOT, expectedPriceCents: 2000 }))).ok).toBe(false);
+    expect((await bookWash(deps, alice, input({ expectedPriceCents: 1600 }))).ok).toBe(false);
+    expect(deps.bookings.rows.size).toBe(0);
+  });
+});
+
 describe("getAvailability", () => {
+  it("quotes each slot with price and crowd level", async () => {
+    const deps = makeDeps(NOW);
+    await bookWash(deps, alice, input()); // takes one of two bays at 10:00
+    const r = await getAvailability(deps, { locationId: LOC, packageId: PKG, localDate: "2026-06-10" });
+    if (!r.ok) throw new Error("expected ok");
+    const at = (t: string) => r.value.slots.find((s) => s.localTime === t)!;
+    expect(at("10:00")).toMatchObject({ priceCents: 2000, discount: null, crowd: "steady", freeBays: 1 });
+    expect(at("14:00")).toMatchObject({ priceCents: 1600, discount: { percentOff: 20 }, crowd: "calm" });
+  });
+
   it("suggests the next open day when the requested day has no slots", async () => {
     const deps = makeDeps(NOW);
     deps.catalog.loc = { ...deps.catalog.loc, blackoutDates: [{ date: "2026-06-11", reason: "Holiday" }] };

@@ -9,13 +9,13 @@ export function CancelButton({ bookingId, version, refundText }: { bookingId: st
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  if (!confirming) return <button className="danger" onClick={() => setConfirming(true)}>Cancel booking</button>;
+  if (!confirming) return <button className="btn btn-danger" onClick={() => setConfirming(true)}>Cancel this wash</button>;
   return (
     <div className="notice warn" style={{ width: "100%" }}>
-      <p>Cancel this booking? {refundText}</p>
+      <p style={{ marginTop: 0 }}><strong>Cancel this wash?</strong> {refundText}</p>
       <div className="row">
         <button
-          className="danger"
+          className="btn btn-danger"
           disabled={busy}
           onClick={async () => {
             setBusy(true);
@@ -32,7 +32,7 @@ export function CancelButton({ bookingId, version, refundText }: { bookingId: st
         >
           {busy ? "Cancelling…" : "Yes, cancel"}
         </button>
-        <button onClick={() => setConfirming(false)} disabled={busy}>Keep booking</button>
+        <button className="btn" onClick={() => setConfirming(false)} disabled={busy}>Keep it</button>
       </div>
       {error && <p className="notice error" role="alert">{error}</p>}
     </div>
