@@ -1,0 +1,140 @@
+// Car wash data model.
+// All instants are stored as timestamptz (UTC). Operating hours are local wall
+// time interpreted in Location.timezone (IANA).
+// Backward compatibility: migrations are expand/contract only. Never rename or
+// drop a column in the same release that stops using it.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CUSTOMER
+  STAFF
+  ADMIN
+}
+
+enum BookingStatus {
+  PENDING_PAYMENT
+  CONFIRMED
+  CHECKED_IN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+  EXPIRED
+}
+
+model User {
+  id        String    @id @default(uuid()) @db.Uuid
+  email     String    @unique
+  name      String?
+  role      Role      @default(CUSTOMER)
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+  bookings  Booking[]
+}
+
+model Location {
+  id                String           @id @default(uuid()) @db.Uuid
+  name              String
+  address           String
+  timezone          String // IANA, e.g. "America/New_York"
+  slotIntervalMin   Int              @default(15)
+  minLeadTimeMin    Int              @default(30)
+  isActive          Boolean          @default(true)
+  operatingHours    OperatingHours[]
+  blackoutDates     BlackoutDate[]
+  bays              Bay[]
+  bookings          Booking[]
+  createdAt         DateTime         @default(now()) @db.Timestamptz(3)
+}
+
+model OperatingHours {
+  id         String   @id @default(uuid()) @db.Uuid
+  locationId String   @db.Uuid
+  location   Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  dayOfWeek  Int // 0 = Sunday .. 6 = Saturday, in the location's timezone
+  opensAt    String // "HH:mm" local wall time
+  closesAt   String // "HH:mm" local wall time, must be after opensAt
+
+  @@unique([locationId, dayOfWeek])
+}
+
+model BlackoutDate {
+  id         String   @id @default(uuid()) @db.Uuid
+  locationId String   @db.Uuid
+  location   Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  date       String // "YYYY-MM-DD" local date
+  reason     String
+
+  @@unique([locationId, date])
+}
+
+model Bay {
+  id         String    @id @default(uuid()) @db.Uuid
+  locationId String    @db.Uuid
+  location   Location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  name       String
+  isActive   Boolean   @default(true)
+  bookings   Booking[]
+}
+
+// Packages are versioned, never mutated in place: a price change creates a new
+// row with the same `code` and version + 1, and deactivates the old one.
+model Package {
+  id          String    @id @default(uuid()) @db.Uuid
+  code        String
+  version     Int       @default(1)
+  name        String
+  description String
+  durationMin Int
+  priceCents  Int
+  currency    String    @default("usd")
+  isActive    Boolean   @default(true)
+  bookings    Booking[]
+
+  @@unique([code, version])
+}
+
+model Booking {
+  id              String        @id @default(uuid()) @db.Uuid
+  customerId      String        @db.Uuid
+  customer        User          @relation(fields: [customerId], references: [id])
+  locationId      String        @db.Uuid
+  location        Location      @relation(fields: [locationId], references: [id])
+  bayId           String        @db.Uuid
+  bay             Bay           @relation(fields: [bayId], references: [id])
+  packageId       String        @db.Uuid
+  package         Package       @relation(fields: [packageId], references: [id])
+  // Snapshots: what the customer agreed to, independent of later catalog edits.
+  packageName     String
+  priceCents      Int
+  currency        String
+  startsAt        DateTime      @db.Timestamptz(3)
+  endsAt          DateTime      @db.Timestamptz(3)
+  status          BookingStatus
+  idempotencyKey  String        @unique
+  paymentRef      String?
+  refundedCents   Int           @default(0)
+  holdExpiresAt   DateTime?     @db.Timestamptz(3)
+  version         Int           @default(1)
+  createdAt       DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime      @updatedAt @db.Timestamptz(3)
+
+  @@index([customerId, startsAt])
+  @@index([locationId, startsAt])
+  @@index([status, holdExpiresAt])
+  // Plus a raw-SQL exclusion constraint (see migration) that makes
+  // double-booking a bay impossible at the database level.
+}
+
+model ProcessedWebhookEvent {
+  eventId    String   @id
+  type       String
+  receivedAt DateTime @default(now()) @db.Timestamptz(3)
+}
